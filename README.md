@@ -15,6 +15,7 @@ FocusAI helps students protect deep work by learning their study goal, exam trac
 - OpenRouter-powered AI coach with user profile context
 - Neon Postgres persistence
 - Orange/black glowing responsive UI with motion, testimonials, and concept-specific visuals
+- 15+ routed screens including study mode, priority contacts, WhatsApp filtering, blocked apps, YouTube study mode, decision lab, distraction alerts, recommendations, and planner
 
 ## Tech Stack
 
@@ -154,6 +155,11 @@ AI coach:
 
 - `POST /api/coach`
 
+Focus controls:
+
+- `GET /api/focus-controls`
+- `PATCH /api/focus-controls`
+
 Protected endpoints require:
 
 ```http
@@ -172,6 +178,33 @@ Authorization: Bearer <token>
 3. Backend generates a personalized focus plan.
 4. Dashboard and insights update from saved sessions and notification decisions.
 5. AI coach receives profile context for more relevant responses.
+
+## App Routes
+
+Public and auth:
+
+- `/`
+- `/login`
+- `/signup`
+
+Protected student routes:
+
+- `/onboarding`
+- `/dashboard`
+- `/controls`
+- `/study-mode`
+- `/priority-contacts`
+- `/whatsapp-filter`
+- `/blocked-apps`
+- `/youtube-study`
+- `/notification-decisions`
+- `/distraction-alert`
+- `/ai-recommendations`
+- `/planner`
+- `/coach`
+- `/insights`
+- `/profile`
+- `/stories`
 
 ## Deployment
 
