@@ -22,21 +22,24 @@ const allowedFrontendOrigins = [
 ]
   .map((origin) => origin?.trim())
   .filter(Boolean);
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowedFrontendOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked origin: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
 
 app.use(helmet());
 app.use(morgan('dev'));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 80 }));
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || allowedFrontendOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error(`CORS blocked origin: ${origin}`));
-    },
-  }),
-);
 app.use(express.json({ limit: '1mb' }));
 
 const demoSessions = new Map();
