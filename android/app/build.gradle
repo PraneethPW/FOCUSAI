@@ -1,0 +1,45 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.focusai.wrapper"
+    compileSdk 35
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "com.focusai.wrapper"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+    }
+
+    flavorDimensions "environment"
+    productFlavors {
+        deployed {
+            dimension "environment"
+            applicationIdSuffix ".deployed"
+            versionNameSuffix "-deployed"
+            buildConfigField "String", "WEB_APP_URL", "\"https://focusai-nine.vercel.app\""
+            resValue "string", "app_name", "FocusAI"
+        }
+        localEmulator {
+            dimension "environment"
+            applicationIdSuffix ".local"
+            versionNameSuffix "-local"
+            buildConfigField "String", "WEB_APP_URL", "\"http://10.0.2.2:5174\""
+            resValue "string", "app_name", "FocusAI Local"
+        }
+        localDevice {
+            dimension "environment"
+            applicationIdSuffix ".device"
+            versionNameSuffix "-device"
+            buildConfigField "String", "WEB_APP_URL", "\"http://192.168.1.10:5174\""
+            resValue "string", "app_name", "FocusAI Device"
+        }
+    }
+}

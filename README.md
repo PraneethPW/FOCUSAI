@@ -38,6 +38,12 @@ Backend:
 - OpenRouter API integration
 - Helmet, CORS, Morgan, and rate limiting
 
+Android wrapper:
+
+- Native Android WebView shell
+- Android Studio compatible Gradle project
+- Deployed, emulator-local, and physical-device-local build flavors
+
 ## Project Structure
 
 ```text
@@ -57,6 +63,9 @@ FocusAI/
     package.json
     railway.json
     .env.example
+  android/
+    app/
+    README.md
   README.md
   .gitignore
 ```
@@ -251,6 +260,19 @@ Backend health check:
 ```bash
 curl http://localhost:8001/api/health
 ```
+
+Android wrapper:
+
+```text
+Open C:\Users\prane\COHORT-HARKIRAT\FocusAI\android in Android Studio.
+Run deployedDebug for the live Vercel/Railway app.
+Run localEmulatorDebug for http://10.0.2.2:5174.
+Run localDeviceDebug after setting your laptop IP in android/app/build.gradle.
+```
+
+When Android loads the local web app through `10.0.2.2` or your laptop IP, the frontend automatically sends backend API requests to the same host on port `8001`.
+
+Full Android instructions are in `android/README.md`.
 
 ## Security Notes
 

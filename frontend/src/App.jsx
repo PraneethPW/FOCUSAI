@@ -45,11 +45,23 @@ const DEPLOYED_API_URL = 'https://focusai-production-31f2.up.railway.app';
 function resolveApiUrl() {
   const configuredUrl = import.meta.env.VITE_API_URL?.trim();
   if (configuredUrl) {
+    if (
+      typeof window !== 'undefined' &&
+      !['localhost', '127.0.0.1'].includes(window.location.hostname) &&
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(configuredUrl)
+    ) {
+      return `http://${window.location.hostname}:8001`;
+    }
+
     return configuredUrl.replace(/\/$/, '');
   }
 
   if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
     return LOCAL_API_URL;
+  }
+
+  if (typeof window !== 'undefined' && /^(10\.0\.2\.2|192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(window.location.hostname)) {
+    return `http://${window.location.hostname}:8001`;
   }
 
   return DEPLOYED_API_URL;
