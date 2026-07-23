@@ -261,6 +261,58 @@ Backend health check:
 curl http://localhost:8001/api/health
 ```
 
+Baseline/load test:
+
+```bash
+cd backend
+npm run load:baseline
+```
+
+Default baseline case:
+
+- 100 virtual users
+- Runs continuously for 1 minute
+- Sends thousands of requests depending on machine/network speed
+- Reports requests per second, min response time, average response time, p95 response time, max response time, status codes, and error rate
+
+Run against local backend:
+
+```bash
+cd backend
+npm run dev
+```
+
+In another terminal:
+
+```bash
+cd backend
+npm run load:baseline -- --target http://localhost:8001
+```
+
+Run against deployed Railway backend:
+
+```bash
+cd backend
+npm run load:baseline -- --target https://focusai-production-31f2.up.railway.app --paths /api/health --vus 100 --duration 60
+```
+
+Example output:
+
+```text
+Requests/sec: 120
+Response time:
+  Min: 50ms
+  Average: 250ms
+  P95: 900ms
+  Max: 1500ms
+```
+
+Thresholds can be configured without changing code:
+
+```bash
+LOAD_MAX_AVG_MS=1000 LOAD_MAX_P95_MS=2500 LOAD_MAX_ERROR_RATE=5 npm run load:baseline
+```
+
 Android wrapper:
 
 ```text
