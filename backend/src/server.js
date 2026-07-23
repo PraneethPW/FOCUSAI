@@ -11,6 +11,17 @@ import { analyzeNotification, buildFocusPlan, buildInsights } from './planner.js
 
 const app = express();
 const port = process.env.PORT || 8001;
+const allowedFrontendOrigins = [
+  process.env.FRONTEND_URL,
+  ...(process.env.FRONTEND_URLS || '').split(','),
+  'https://focusai-nine.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:5174',
+]
+  .map((origin) => origin?.trim())
+  .filter(Boolean);
 
 app.use(helmet());
 app.use(morgan('dev'));
@@ -18,15 +29,7 @@ app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 80 }));
 app.use(
   cors({
     origin(origin, callback) {
-      const allowedOrigins = [
-        process.env.FRONTEND_URL,
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://127.0.0.1:5173',
-        'http://127.0.0.1:5174',
-      ].filter(Boolean);
-
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedFrontendOrigins.includes(origin)) {
         return callback(null, true);
       }
 

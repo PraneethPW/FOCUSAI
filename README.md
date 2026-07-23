@@ -92,6 +92,12 @@ Create `frontend/.env`:
 VITE_API_URL=http://localhost:8001
 ```
 
+For Vercel production, set:
+
+```env
+VITE_API_URL=https://focusai-production-31f2.up.railway.app
+```
+
 Create `backend/.env`:
 
 ```env
@@ -101,6 +107,12 @@ OPENROUTER_API_KEY=your-openrouter-key
 OPENROUTER_MODEL=openai/gpt-4o-mini
 FRONTEND_URL=http://localhost:5174
 JWT_SECRET=replace-with-a-long-random-secret
+```
+
+For Railway production, set:
+
+```env
+FRONTEND_URL=https://focusai-nine.vercel.app
 ```
 
 Never commit real `.env` files. Use `.env.example` for placeholders only.
@@ -163,7 +175,7 @@ Backend on Railway:
   - `OPENROUTER_API_KEY`
   - `OPENROUTER_MODEL=openai/gpt-4o-mini`
   - `JWT_SECRET`
-  - `FRONTEND_URL=<your Vercel frontend URL>`
+  - `FRONTEND_URL=https://focusai-nine.vercel.app`
 
 Frontend on Vercel:
 
@@ -171,7 +183,7 @@ Frontend on Vercel:
 - Build command: `npm run build`
 - Output directory: `dist`
 - Required environment variable:
-  - `VITE_API_URL=<your Railway backend URL>`
+  - `VITE_API_URL=https://focusai-production-31f2.up.railway.app`
 
 After Railway gives you the backend URL, add it as `VITE_API_URL` in Vercel. After Vercel gives you the frontend URL, add it as `FRONTEND_URL` in Railway so CORS allows the deployed frontend.
 
