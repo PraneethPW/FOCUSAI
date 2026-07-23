@@ -97,4 +97,12 @@ export async function ensureSchema() {
       add column if not exists interruption_cost integer not null default 50,
       add column if not exists suggested_action text;
   `);
+
+  await query(`
+    create table if not exists focus_controls (
+      user_id uuid primary key references users(id) on delete cascade,
+      controls jsonb not null default '{}'::jsonb,
+      updated_at timestamptz not null default now()
+    );
+  `);
 }

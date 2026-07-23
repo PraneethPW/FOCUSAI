@@ -67,6 +67,7 @@ app.get('/', (req, res) => {
 
 const demoSessions = new Map();
 const demoNotifications = new Map();
+const demoControls = new Map();
 
 function userStore(store, userId) {
   if (!store.has(userId)) {
@@ -100,6 +101,65 @@ function normalizeNotification(event) {
     interruptionCost: Number(event.interruption_cost || event.interruptionCost || 50),
     suggestedAction: event.suggested_action || event.suggestedAction,
     createdAt: event.created_at || event.createdAt,
+  };
+}
+
+function listFromValue(value, fallback = []) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return fallback;
+}
+
+function defaultFocusControls(user = {}) {
+  const distraction = user.biggestDistraction || user.biggest_distraction || 'Instagram';
+  const examType = user.examType || user.exam_type || 'Academics';
+
+  return {
+    priorityContacts: [
+      { name: 'Parent / Guardian', relation: 'Emergency', phone: '', allowDuringFocus: true },
+      { name: 'Faculty Mentor', relation: examType, phone: '', allowDuringFocus: true },
+    ],
+    allowedGroups: [`${examType} updates`, 'College group', 'Assignments'],
+    blockedChats: ['Personal chats', 'Random groups'],
+    blockedApps: [distraction, 'Snapchat', 'YouTube Shorts', 'Games'],
+    studyChannels: ['Educational videos', 'Tutorials', 'Lectures', `${examType} revision`],
+    studyMusicAllowed: true,
+    appSwitchLimit: 5,
+    alertWindowMinutes: 10,
+    customRule: `Allow ${examType} deadlines and emergency contacts. Batch ${distraction} until breaks.`,
+  };
+}
+
+function normalizeFocusControls(controls = {}, user = {}) {
+  const defaults = defaultFocusControls(user);
+  const priorityContacts = Array.isArray(controls.priorityContacts) ? controls.priorityContacts : defaults.priorityContacts;
+
+  return {
+    priorityContacts: priorityContacts
+      .map((contact) => ({
+        name: String(contact.name || '').trim(),
+        relation: String(contact.relation || 'Priority').trim(),
+        phone: String(contact.phone || '').trim(),
+        allowDuringFocus: contact.allowDuringFocus !== false,
+      }))
+      .filter((contact) => contact.name),
+    allowedGroups: listFromValue(controls.allowedGroups, defaults.allowedGroups),
+    blockedChats: listFromValue(controls.blockedChats, defaults.blockedChats),
+    blockedApps: listFromValue(controls.blockedApps, defaults.blockedApps),
+    studyChannels: listFromValue(controls.studyChannels, defaults.studyChannels),
+    studyMusicAllowed: controls.studyMusicAllowed !== false,
+    appSwitchLimit: Math.max(1, Number(controls.appSwitchLimit || defaults.appSwitchLimit)),
+    alertWindowMinutes: Math.max(1, Number(controls.alertWindowMinutes || defaults.alertWindowMinutes)),
+    customRule: String(controls.customRule || defaults.customRule).trim(),
   };
 }
 
@@ -163,6 +223,47 @@ app.patch('/api/profile', requireAuth, async (req, res, next) => {
   try {
     const session = await updateUserProfile(req.user.id, req.body);
     res.json(session);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/focus-controls', requireAuth, async (req, res, next) => {
+  try {
+    if (!process.env.DATABASE_URL) {
+      const controls = userStore(demoControls, req.user.id)[0] || defaultFocusControls(req.user);
+      return res.json({ controls: normalizeFocusControls(controls, req.user) });
+    }
+
+    const result = await query('select controls from focus_controls where user_id = $1', [req.user.id]);
+    const controls = result.rows[0]?.controls || defaultFocusControls(req.user);
+    return res.json({ controls: normalizeFocusControls(controls, req.user) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/focus-controls', requireAuth, async (req, res, next) => {
+  try {
+    const controls = normalizeFocusControls(req.body, req.user);
+
+    if (!process.env.DATABASE_URL) {
+      demoControls.set(req.user.id, [controls]);
+      return res.json({ controls });
+    }
+
+    const result = await query(
+      `
+      insert into focus_controls (user_id, controls)
+      values ($1, $2)
+      on conflict (user_id)
+      do update set controls = excluded.controls, updated_at = now()
+      returning controls
+      `,
+      [req.user.id, controls],
+    );
+
+    return res.json({ controls: normalizeFocusControls(result.rows[0].controls, req.user) });
   } catch (error) {
     next(error);
   }

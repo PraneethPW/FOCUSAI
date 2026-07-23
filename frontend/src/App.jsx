@@ -60,6 +60,7 @@ const API_URL = resolveApiUrl();
 const navItems = [
   { label: 'Home', path: '/' },
   { label: 'Dashboard', path: '/dashboard' },
+  { label: 'Controls', path: '/controls' },
   { label: 'AI Coach', path: '/coach' },
   { label: 'Insights', path: '/insights' },
   { label: 'Profile', path: '/profile' },
@@ -164,6 +165,7 @@ function App() {
             <Route path="/signup" element={<AuthPage mode="signup" saveAuth={saveAuth} auth={auth} />} />
             <Route path="/onboarding" element={<ProtectedRoute auth={auth}><Profile user={auth?.user} token={auth?.token} saveAuth={saveAuth} logout={logout} onboarding /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute auth={auth}><Dashboard user={auth?.user} token={auth?.token} logout={logout} /></ProtectedRoute>} />
+            <Route path="/controls" element={<ProtectedRoute auth={auth}><FocusControls user={auth?.user} token={auth?.token} logout={logout} /></ProtectedRoute>} />
             <Route path="/coach" element={<ProtectedRoute auth={auth}><Coach token={auth?.token} logout={logout} /></ProtectedRoute>} />
             <Route path="/insights" element={<ProtectedRoute auth={auth}><Insights token={auth?.token} logout={logout} /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute auth={auth}><Profile user={auth?.user} token={auth?.token} saveAuth={saveAuth} logout={logout} /></ProtectedRoute>} />
@@ -1618,6 +1620,288 @@ function NotificationAnalyzer({ events, form, setForm, onSubmit, loading }) {
       </div>
     </div>
   );
+}
+
+function FocusControls({ user, token, logout }) {
+  const [controls, setControls] = useState(() => defaultClientControls(user));
+  const [draftContact, setDraftContact] = useState({ name: '', relation: '', phone: '' });
+  const [draftGroup, setDraftGroup] = useState('');
+  const [draftBlockedChat, setDraftBlockedChat] = useState('');
+  const [draftBlockedApp, setDraftBlockedApp] = useState('');
+  const [draftChannel, setDraftChannel] = useState('');
+  const [switchCount, setSwitchCount] = useState(3);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState('');
+  const [aiTip, setAiTip] = useState('');
+  const decision = buildControlDecision(controls, switchCount, user);
+
+  useEffect(() => {
+    requestJson('/api/focus-controls', { token, logout })
+      .then((data) => setControls(mergeClientControls(data.controls, user)))
+      .catch((error) => setStatus(error.message));
+  }, [token]);
+
+  function updateControl(key, value) {
+    setControls((current) => ({ ...current, [key]: value }));
+  }
+
+  function addContact() {
+    if (!draftContact.name.trim()) {
+      return;
+    }
+    updateControl('priorityContacts', [
+      ...controls.priorityContacts,
+      { ...draftContact, allowDuringFocus: true },
+    ]);
+    setDraftContact({ name: '', relation: '', phone: '' });
+  }
+
+  function removeListItem(key, index) {
+    updateControl(
+      key,
+      controls[key].filter((_, itemIndex) => itemIndex !== index),
+    );
+  }
+
+  function addListItem(key, value, reset) {
+    const cleanValue = value.trim();
+    if (!cleanValue) {
+      return;
+    }
+    updateControl(key, [...controls[key], cleanValue]);
+    reset('');
+  }
+
+  async function saveControls() {
+    setSaving(true);
+    setStatus('');
+    try {
+      const data = await requestJson('/api/focus-controls', {
+        token,
+        logout,
+        method: 'PATCH',
+        body: JSON.stringify(controls),
+      });
+      setControls(mergeClientControls(data.controls, user));
+      setStatus('Focus controls saved. Dashboard decisions will now use these rules.');
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function generateTip() {
+    setSaving(true);
+    setAiTip('');
+    try {
+      const data = await requestJson('/api/coach', {
+        token,
+        logout,
+        method: 'POST',
+        body: JSON.stringify({
+          message: `Create a short improvement plan from these focus controls:
+Priority contacts: ${controls.priorityContacts.map((contact) => contact.name).join(', ')}
+Allowed groups: ${controls.allowedGroups.join(', ')}
+Blocked chats: ${controls.blockedChats.join(', ')}
+Blocked apps: ${controls.blockedApps.join(', ')}
+Study channels: ${controls.studyChannels.join(', ')}
+App switches in ${controls.alertWindowMinutes} minutes: ${switchCount}
+Switch alert limit: ${controls.appSwitchLimit}
+Custom rule: ${controls.customRule}`,
+        }),
+      });
+      setAiTip(data.reply || data.fallback || decision.recommendation);
+    } catch (error) {
+      setAiTip(error.message || decision.recommendation);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Page>
+      <ShellPage
+        eyebrow="Focus controls"
+        title="Build your personal distraction firewall"
+        body="Configure priority contacts, WhatsApp filters, blocked apps, YouTube study mode, and app-switch alerts from your own inputs."
+      >
+        {status && <div className="mb-5 rounded-3xl border border-aqua/25 bg-aqua/10 p-4 text-sm font-bold">{status}</div>}
+        <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <div className="grid gap-4">
+            <ControlPanel title="Priority contacts" icon={User} accent="text-volt">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <input value={draftContact.name} onChange={(event) => setDraftContact((current) => ({ ...current, name: event.target.value }))} className="rounded-2xl border border-white/10 bg-ink/80 px-4 py-3 font-semibold outline-none ring-aqua/30 focus:ring-4" placeholder="Name" />
+                <input value={draftContact.relation} onChange={(event) => setDraftContact((current) => ({ ...current, relation: event.target.value }))} className="rounded-2xl border border-white/10 bg-ink/80 px-4 py-3 font-semibold outline-none ring-aqua/30 focus:ring-4" placeholder="Relation" />
+                <input value={draftContact.phone} onChange={(event) => setDraftContact((current) => ({ ...current, phone: event.target.value }))} className="rounded-2xl border border-white/10 bg-ink/80 px-4 py-3 font-semibold outline-none ring-aqua/30 focus:ring-4" placeholder="Phone" />
+              </div>
+              <button type="button" onClick={addContact} className="mt-3 inline-flex items-center gap-2 rounded-2xl bg-volt px-4 py-3 font-black text-ink">
+                <UserPlus size={17} />
+                Add Contact
+              </button>
+              <div className="mt-4 grid gap-3">
+                {controls.priorityContacts.map((contact, index) => (
+                  <ControlRow key={`${contact.name}-${index}`} title={contact.name} body={`${contact.relation || 'Priority'} ${contact.phone ? `- ${contact.phone}` : ''}`} badge="Allowed" onRemove={() => removeListItem('priorityContacts', index)} />
+                ))}
+              </div>
+            </ControlPanel>
+
+            <ControlPanel title="WhatsApp and group filter" icon={MessageSquareWarning} accent="text-aqua">
+              <EditableTagList title="Allowed groups" items={controls.allowedGroups} value={draftGroup} setValue={setDraftGroup} onAdd={() => addListItem('allowedGroups', draftGroup, setDraftGroup)} onRemove={(index) => removeListItem('allowedGroups', index)} />
+              <EditableTagList title="Blocked chats" items={controls.blockedChats} value={draftBlockedChat} setValue={setDraftBlockedChat} onAdd={() => addListItem('blockedChats', draftBlockedChat, setDraftBlockedChat)} onRemove={(index) => removeListItem('blockedChats', index)} placeholder="Personal chats" />
+            </ControlPanel>
+
+            <ControlPanel title="Blocked apps" icon={ShieldCheck} accent="text-pulse">
+              <EditableTagList title="Apps blocked during study mode" items={controls.blockedApps} value={draftBlockedApp} setValue={setDraftBlockedApp} onAdd={() => addListItem('blockedApps', draftBlockedApp, setDraftBlockedApp)} onRemove={(index) => removeListItem('blockedApps', index)} placeholder="Instagram, Games..." />
+            </ControlPanel>
+          </div>
+
+          <div className="grid gap-4">
+            <ControlPanel title="YouTube study mode" icon={Play} accent="text-volt">
+              <EditableTagList title="Allowed study content" items={controls.studyChannels} value={draftChannel} setValue={setDraftChannel} onAdd={() => addListItem('studyChannels', draftChannel, setDraftChannel)} onRemove={(index) => removeListItem('studyChannels', index)} placeholder="Lectures, tutorials..." />
+              <label className="mt-4 flex items-center justify-between rounded-2xl border border-white/10 bg-ink/70 p-4">
+                <span className="font-black">Allow study music</span>
+                <input type="checkbox" checked={controls.studyMusicAllowed} onChange={(event) => updateControl('studyMusicAllowed', event.target.checked)} className="h-5 w-5 accent-orange-400" />
+              </label>
+            </ControlPanel>
+
+            <ControlPanel title="AI distraction alert" icon={BellRing} accent="text-pulse">
+              <RangeControl label="App switch limit" value={controls.appSwitchLimit} min={1} max={20} onChange={(value) => updateControl('appSwitchLimit', value)} />
+              <RangeControl label="Alert window minutes" value={controls.alertWindowMinutes} min={5} max={60} onChange={(value) => updateControl('alertWindowMinutes', value)} />
+              <RangeControl label="Current app switches" value={switchCount} min={0} max={30} onChange={setSwitchCount} />
+              <div className={`mt-5 rounded-3xl border p-5 ${decision.alert ? 'border-pulse/40 bg-pulse/15' : 'border-aqua/30 bg-aqua/10'}`}>
+                <p className="text-sm font-black uppercase text-white/50">Live alert decision</p>
+                <h3 className="mt-2 text-2xl font-black">{decision.alert ? 'Return to study' : 'Focus stable'}</h3>
+                <p className="mt-2 leading-7 text-white/65">{decision.alertText}</p>
+              </div>
+            </ControlPanel>
+
+            <ControlPanel title="Notification decision cockpit" icon={Radar} accent="text-aqua">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DecisionList title="Allowed" items={[...controls.priorityContacts.map((contact) => contact.name), ...controls.allowedGroups, ...controls.studyChannels.slice(0, 2)]} tone="bg-aqua/15 border-aqua/30 text-aqua" />
+                <DecisionList title="Blocked" items={[...controls.blockedApps, ...controls.blockedChats]} tone="bg-pulse/15 border-pulse/30 text-pulse" />
+              </div>
+              <textarea value={controls.customRule} onChange={(event) => updateControl('customRule', event.target.value)} className="mt-4 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-ink/80 p-4 font-semibold outline-none ring-aqua/30 focus:ring-4" />
+            </ControlPanel>
+
+            <div className="glass rounded-[2rem] p-5">
+              <p className="text-sm font-black uppercase text-volt">AI recommendations</p>
+              <p className="mt-3 leading-7 text-white/65">{aiTip || decision.recommendation}</p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <button type="button" onClick={saveControls} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-volt px-5 py-4 font-black text-ink disabled:opacity-60">
+                  {saving ? <Activity className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
+                  Save Controls
+                </button>
+                <button type="button" onClick={generateTip} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/10 px-5 py-4 font-black text-white disabled:opacity-60">
+                  <WandSparkles size={18} />
+                  AI Improve
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </ShellPage>
+    </Page>
+  );
+}
+
+function ControlPanel({ title, icon: Icon, accent, children }) {
+  return (
+    <motion.section whileHover={{ y: -4 }} className="glass rounded-[2rem] p-5">
+      <div className="mb-5 flex items-center justify-between gap-4">
+        <h2 className="text-xl font-black">{title}</h2>
+        <Icon className={accent} />
+      </div>
+      {children}
+    </motion.section>
+  );
+}
+
+function ControlRow({ title, body, badge, onRemove }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-ink/70 p-4">
+      <div className="min-w-0">
+        <p className="truncate font-black">{title}</p>
+        <p className="mt-1 truncate text-sm text-white/45">{body}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="rounded-xl bg-aqua px-3 py-2 text-xs font-black text-ink">{badge}</span>
+        <button type="button" onClick={onRemove} className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/10">
+          <X size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EditableTagList({ title, items, value, setValue, onAdd, onRemove, placeholder = 'Add item' }) {
+  return (
+    <div className="mt-4 first:mt-0">
+      <p className="text-sm font-black uppercase text-white/45">{title}</p>
+      <div className="mt-3 flex gap-2">
+        <input value={value} onChange={(event) => setValue(event.target.value)} className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-ink/80 px-4 py-3 font-semibold outline-none ring-aqua/30 focus:ring-4" placeholder={placeholder} />
+        <button type="button" onClick={onAdd} className="rounded-2xl bg-aqua px-4 py-3 font-black text-ink">Add</button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {items.map((item, index) => (
+          <button key={`${item}-${index}`} type="button" onClick={() => onRemove(index)} className="rounded-full border border-white/10 bg-white/10 px-4 py-2 text-sm font-black text-white/75">
+            {item} x
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DecisionList({ title, items, tone }) {
+  return (
+    <div className={`rounded-2xl border p-4 ${tone}`}>
+      <p className="font-black">{title}</p>
+      <div className="mt-3 grid gap-2">
+        {items.slice(0, 6).map((item, index) => (
+          <div key={`${item}-${index}`} className="rounded-xl bg-black/30 px-3 py-2 text-sm font-bold text-white">
+            {item}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function defaultClientControls(user = {}) {
+  const distraction = user?.biggestDistraction || 'Instagram';
+  const examType = user?.examType || 'Academics';
+  return {
+    priorityContacts: [
+      { name: 'Parent / Guardian', relation: 'Emergency', phone: '', allowDuringFocus: true },
+      { name: 'Faculty Mentor', relation: examType, phone: '', allowDuringFocus: true },
+    ],
+    allowedGroups: [`${examType} updates`, 'College group', 'Assignments'],
+    blockedChats: ['Personal chats', 'Random groups'],
+    blockedApps: [distraction, 'Snapchat', 'YouTube Shorts', 'Games'],
+    studyChannels: ['Educational videos', 'Tutorials', 'Lectures', `${examType} revision`],
+    studyMusicAllowed: true,
+    appSwitchLimit: 5,
+    alertWindowMinutes: 10,
+    customRule: `Allow ${examType} deadlines and emergency contacts. Batch ${distraction} until breaks.`,
+  };
+}
+
+function mergeClientControls(controls = {}, user) {
+  return { ...defaultClientControls(user), ...controls };
+}
+
+function buildControlDecision(controls, switchCount, user = {}) {
+  const blockedApps = controls.blockedApps.join(', ');
+  const allowedCount = controls.priorityContacts.length + controls.allowedGroups.length + controls.studyChannels.length;
+  const alert = Number(switchCount) >= Number(controls.appSwitchLimit);
+  return {
+    alert,
+    alertText: alert
+      ? `You switched apps ${switchCount} times in ${controls.alertWindowMinutes} minutes. Block ${blockedApps} and return to one study task.`
+      : `Only ${switchCount} switches tracked. Priority contacts and study groups can still reach you.`,
+    recommendation: `FocusAI will allow ${allowedCount} priority sources, block ${blockedApps}, and keep ${user?.studyGoal || 'your study goal'} protected with this custom rule: ${controls.customRule}`,
+  };
 }
 
 function Profile({ user, token, saveAuth, logout, onboarding = false }) {
