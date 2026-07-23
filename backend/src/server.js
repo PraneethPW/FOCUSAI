@@ -11,6 +11,8 @@ import { analyzeNotification, buildFocusPlan, buildInsights } from './planner.js
 
 const app = express();
 const port = process.env.PORT || 8001;
+let databaseReady = !process.env.DATABASE_URL;
+let databaseInitError = null;
 const deployedFrontendUrl = 'https://focusai-nine.vercel.app';
 const allowedFrontendOrigins = [
   process.env.FRONTEND_URL,
@@ -106,8 +108,21 @@ app.get('/api/health', (req, res) => {
     ok: true,
     service: 'FocusAI API',
     database: Boolean(process.env.DATABASE_URL),
+    databaseReady,
+    databaseError: databaseInitError ? databaseInitError.message : null,
     ai: Boolean(process.env.OPENROUTER_API_KEY),
   });
+});
+
+app.use('/api', (req, res, next) => {
+  if (process.env.DATABASE_URL && databaseInitError) {
+    return res.status(503).json({
+      error: 'Database is not ready.',
+      detail: process.env.NODE_ENV === 'production' ? undefined : databaseInitError.message,
+    });
+  }
+
+  return next();
 });
 
 app.post('/api/auth/signup', async (req, res, next) => {
@@ -358,21 +373,26 @@ app.use((error, req, res, next) => {
   });
 });
 
+const server = app.listen(port, '0.0.0.0', () => {
+  console.log(`FocusAI API running on port ${port}`);
+});
+
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`Port ${port} is already in use. Set PORT to another value, for example PORT=8002.`);
+    process.exit(1);
+  }
+  throw error;
+});
+
 ensureSchema()
   .then(() => {
-    const server = app.listen(port, () => {
-      console.log(`FocusAI API running on port ${port}`);
-    });
-
-    server.on('error', (error) => {
-      if (error.code === 'EADDRINUSE') {
-        console.error(`Port ${port} is already in use. Set PORT to another value, for example PORT=8002.`);
-        process.exit(1);
-      }
-      throw error;
-    });
+    databaseReady = true;
+    databaseInitError = null;
+    console.log('FocusAI database schema is ready.');
   })
   .catch((error) => {
-    console.error('Failed to initialize FocusAI API', error);
-    process.exit(1);
+    databaseReady = false;
+    databaseInitError = error;
+    console.error('FocusAI database schema initialization failed.', error);
   });
