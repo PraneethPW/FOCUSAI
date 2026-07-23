@@ -41,6 +41,8 @@ Backend:
 
 ```text
 FocusAI/
+  package.json
+  railway.json
   frontend/
     src/
     package.json
@@ -150,24 +152,19 @@ Authorization: Bearer <token>
 
 ## Deployment
 
-Frontend on Vercel:
+Railway single-service deployment:
 
-- Root directory: `frontend`
+- Root directory: repository root
 - Build command: `npm run build`
-- Output directory: `dist`
-- Environment variable: `VITE_API_URL=<your Railway backend URL>`
-
-Backend on Railway:
-
-- Root directory: `backend`
 - Start command: `npm start`
-- Environment variables:
-  - `PORT`
+- The backend serves `frontend/dist` in production, so the React app and `/api` routes run from the same Railway domain.
+- Required environment variables:
+  - `NODE_ENV=production`
   - `DATABASE_URL`
   - `OPENROUTER_API_KEY`
   - `OPENROUTER_MODEL`
-  - `FRONTEND_URL`
   - `JWT_SECRET`
+  - `FRONTEND_URL=<your Railway public URL>` after the first deploy
 
 Neon:
 
@@ -176,10 +173,9 @@ Neon:
 
 ## Validation
 
-Frontend production build:
+Full production build:
 
 ```bash
-cd frontend
 npm run build
 ```
 
@@ -196,4 +192,3 @@ curl http://localhost:8001/api/health
 - Auth routes are rate limited.
 - Helmet is enabled for safer HTTP headers.
 - Real secrets are excluded by `.gitignore`.
-

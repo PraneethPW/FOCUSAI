@@ -4,6 +4,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { askFocusCoach } from './openrouter.js';
 import { ensureSchema, query } from './db.js';
 import { loginUser, publicUser, requireAuth, signupUser, updateUserProfile } from './auth.js';
@@ -11,8 +13,15 @@ import { analyzeNotification, buildFocusPlan, buildInsights } from './planner.js
 
 const app = express();
 const port = process.env.PORT || 8001;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const frontendDistPath = path.resolve(__dirname, '../../frontend/dist');
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  }),
+);
 app.use(morgan('dev'));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 80 }));
 app.use(
@@ -322,6 +331,13 @@ Student request: ${message}`,
     next(error);
   }
 });
+
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(frontendDistPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(frontendDistPath, 'index.html'));
+  });
+}
 
 app.use((error, req, res, next) => {
   console.error(error);
