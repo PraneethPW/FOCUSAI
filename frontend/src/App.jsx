@@ -743,10 +743,30 @@ function Dashboard({ user, token, logout }) {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [notice, setNotice] = useState('');
+  const [activeSession, setActiveSession] = useState(() => {
+    const saved = localStorage.getItem(`focusai_active_session_${user?.id || 'guest'}`);
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [notificationForm, setNotificationForm] = useState({
     appName: user?.biggestDistraction || 'Instagram',
     message: 'New reels and group messages are waiting',
     context: fallbackPlan.mode,
+  });
+  const [quickSession, setQuickSession] = useState({
+    mode: fallbackPlan.mode,
+    durationMinutes: fallbackPlan.blockLength,
+    intensity: 'Balanced',
+  });
+  const [energyCheck, setEnergyCheck] = useState({
+    energy: 72,
+    stress: 38,
+    environment: 'Library',
+  });
+  const [goalLab, setGoalLab] = useState({
+    targetHours: Number(user?.dailyFocusHours || 4),
+    deadlineDays: 7,
+    difficulty: 68,
   });
 
   const plan = normalizePlan(dashboard?.plan || fallbackPlan);
@@ -761,6 +781,8 @@ function Dashboard({ user, token, logout }) {
   };
   const sessions = dashboard?.sessions || [];
   const notificationEvents = dashboard?.notificationEvents || plan.notifications.map((item, index) => ({ id: index, ...item }));
+  const adaptiveCheck = useMemo(() => buildAdaptiveCheckIn(energyCheck, plan), [energyCheck, plan]);
+  const goalProjection = useMemo(() => buildGoalProjection(goalLab, user, plan), [goalLab, user, plan]);
 
   async function authFetch(path, options = {}) {
     const response = await fetch(`${API_URL}${path}`, {
@@ -797,25 +819,66 @@ function Dashboard({ user, token, logout }) {
     }
   }
 
-  async function startFocusSession() {
+  async function startFocusSession(overrides = {}) {
     setActionLoading(true);
     setNotice('');
     try {
+      const sessionMode = overrides.mode || quickSession.mode || plan.mode;
+      const sessionDuration = Number(overrides.durationMinutes || quickSession.durationMinutes || plan.blockLength);
+      const sessionFocusScore = Number(overrides.focusScore || plan.focusScore);
       const data = await authFetch('/api/sessions', {
         method: 'POST',
         body: JSON.stringify({
-          mode: plan.mode,
-          focusScore: plan.focusScore,
+          mode: sessionMode,
+          focusScore: sessionFocusScore,
           notificationsBlocked: plan.blockedAlerts,
-          durationMinutes: plan.blockLength,
-          notes: plan.recommendation,
+          durationMinutes: sessionDuration,
+          notes: overrides.notes || `${quickSession.intensity} custom session. ${plan.recommendation}`,
         }),
       });
       setDashboard((current) => ({
         ...(current || {}),
         sessions: [data.session, ...(current?.sessions || [])],
       }));
-      setNotice('Focus session started and saved.');
+      const startedAt = Date.now();
+      const sessionForTimer = {
+        ...data.session,
+        startedAt,
+        endsAt: startedAt + Number(data.session.durationMinutes || sessionDuration || 40) * 60 * 1000,
+      };
+      setActiveSession(sessionForTimer);
+      localStorage.setItem(`focusai_active_session_${user?.id || 'guest'}`, JSON.stringify(sessionForTimer));
+      setNotice('Focus session started. Timer is now running.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function completeActiveSession() {
+    if (!activeSession) {
+      return;
+    }
+
+    setActionLoading(true);
+    setNotice('');
+    try {
+      const data = await authFetch(`/api/sessions/${activeSession.id}/complete`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          focusScore: plan.focusScore,
+          notes: 'Completed from FocusAI dashboard timer.',
+        }),
+      });
+      setDashboard((current) => ({
+        ...(current || {}),
+        sessions: (current?.sessions || []).map((session) => (session.id === data.session.id ? data.session : session)),
+      }));
+      setActiveSession(null);
+      setRemainingSeconds(0);
+      localStorage.removeItem(`focusai_active_session_${user?.id || 'guest'}`);
+      setNotice('Focus session completed and saved.');
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -848,6 +911,25 @@ function Dashboard({ user, token, logout }) {
     loadDashboard();
   }, []);
 
+  useEffect(() => {
+    if (!activeSession?.endsAt) {
+      setRemainingSeconds(0);
+      return undefined;
+    }
+
+    const updateTimer = () => {
+      const secondsLeft = Math.max(0, Math.ceil((Number(activeSession.endsAt) - Date.now()) / 1000));
+      setRemainingSeconds(secondsLeft);
+      if (secondsLeft === 0) {
+        localStorage.removeItem(`focusai_active_session_${user?.id || 'guest'}`);
+      }
+    };
+
+    updateTimer();
+    const interval = window.setInterval(updateTimer, 1000);
+    return () => window.clearInterval(interval);
+  }, [activeSession?.endsAt, user?.id]);
+
   return (
     <Page>
       <ShellPage
@@ -855,6 +937,14 @@ function Dashboard({ user, token, logout }) {
         title={`Hi ${user?.name?.split(' ')[0] || 'Student'}, your focus system is calibrated.`}
         body={`Goal: ${user?.studyGoal || 'build consistent study momentum'}. FocusAI is tuning alerts around ${user?.examType || 'your academic priority'} and your ${user?.studyWindow || 'best study window'}.`}
       >
+        <FocusTimerBanner
+          activeSession={activeSession}
+          remainingSeconds={remainingSeconds}
+          plan={plan}
+          onStart={startFocusSession}
+          onComplete={completeActiveSession}
+          loading={loading || actionLoading}
+        />
         {notice && (
           <div className="mb-5 rounded-3xl border border-aqua/20 bg-aqua/10 p-4 text-sm font-bold text-white">
             {notice}
@@ -897,15 +987,6 @@ function Dashboard({ user, token, logout }) {
               <p className="text-sm font-black uppercase text-aqua">Today&apos;s AI recommendation</p>
               <p className="mt-2 leading-7 text-white/72">{plan.recommendation}</p>
             </div>
-            <button
-              type="button"
-              disabled={loading || actionLoading}
-              onClick={startFocusSession}
-              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-volt px-5 py-4 font-black text-ink shadow-[0_0_40px_rgba(249,115,22,0.44)] disabled:opacity-60"
-            >
-              {actionLoading ? <Activity className="animate-spin" size={18} /> : <Play size={18} />}
-              Start Saved Focus Session
-            </button>
           </div>
           <div className="grid gap-4">
             <PersonalFocusVisual user={user} plan={plan} />
@@ -918,10 +999,331 @@ function Dashboard({ user, token, logout }) {
             />
           </div>
         </div>
+        <div className="mt-4 grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+          <FlashSessionLab
+            quickSession={quickSession}
+            setQuickSession={setQuickSession}
+            plan={plan}
+            onStart={startFocusSession}
+            loading={loading || actionLoading}
+          />
+          <div className="grid gap-4">
+            <EnergyCheckIn check={energyCheck} setCheck={setEnergyCheck} result={adaptiveCheck} />
+            <GoalPressureLab lab={goalLab} setLab={setGoalLab} projection={goalProjection} />
+          </div>
+        </div>
         <PersonalPlanGrid plan={plan} user={user} insights={insights} sessions={sessions} />
       </ShellPage>
     </Page>
   );
+}
+
+function FocusTimerBanner({ activeSession, remainingSeconds, plan, onStart, onComplete, loading }) {
+  const isRunning = Boolean(activeSession && remainingSeconds > 0);
+  const isFinished = Boolean(activeSession && remainingSeconds === 0);
+  const progress =
+    activeSession?.durationMinutes && remainingSeconds
+      ? Math.max(0, Math.min(100, (remainingSeconds / (Number(activeSession.durationMinutes) * 60)) * 100))
+      : 0;
+
+  return (
+    <div
+      className={`sticky top-20 z-20 mb-6 overflow-hidden rounded-[1.75rem] border border-aqua/40 bg-ink/90 p-4 backdrop-blur-2xl ${
+        isRunning ? 'timer-blink' : 'shadow-glow'
+      }`}
+    >
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,207,51,0.2),transparent_18rem),linear-gradient(90deg,rgba(255,90,31,0.22),rgba(255,138,0,0.05))]" />
+      <div className="relative grid gap-4 lg:grid-cols-[auto_1fr_auto] lg:items-center">
+        <div className="flex items-center gap-3">
+          <div className="grid h-14 w-14 place-items-center rounded-2xl bg-aqua text-ink shadow-hot">
+            <TimerReset className={isRunning ? 'animate-pulse' : ''} />
+          </div>
+          <div>
+            <p className="text-xs font-black uppercase text-volt">{isRunning ? 'Focus session running' : isFinished ? 'Session complete' : 'Ready to focus'}</p>
+            <h2 className="mt-1 text-xl font-black">{activeSession?.mode || plan.mode}</h2>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase text-white/45">Live countdown</p>
+              <p className="mt-1 font-mono text-5xl font-black leading-none text-volt sm:text-6xl">
+                {formatTimer(remainingSeconds || Number(plan.blockLength || 40) * 60)}
+              </p>
+            </div>
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-bold text-white/50">{plan.block}</p>
+              <p className="mt-1 text-xs font-black uppercase text-aqua">Blinking while active</p>
+            </div>
+          </div>
+          <div className="mt-3 h-3 overflow-hidden rounded-full bg-white/10">
+            <motion.div
+              animate={{ width: isRunning ? `${progress}%` : isFinished ? '0%' : '100%' }}
+              transition={{ duration: 0.35 }}
+              className="h-full rounded-full bg-gradient-to-r from-volt via-aqua to-pulse"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+          {isRunning ? (
+            <button
+              type="button"
+              onClick={onComplete}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-5 py-3 font-black text-ink disabled:opacity-60"
+            >
+              <CheckCircle2 size={18} />
+              Complete
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onStart}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-volt px-5 py-3 font-black text-ink shadow-[0_0_40px_rgba(249,115,22,0.44)] disabled:opacity-60"
+            >
+              {loading ? <Activity className="animate-spin" size={18} /> : <Play size={18} />}
+              Start Timer
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatTimer(totalSeconds) {
+  const safeSeconds = Math.max(0, Number(totalSeconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function FlashSessionLab({ quickSession, setQuickSession, plan, onStart, loading }) {
+  const intensityMap = {
+    Calm: { score: -4, copy: 'Lower pressure, more recovery space' },
+    Balanced: { score: 0, copy: 'Steady sprint with normal notification batching' },
+    Extreme: { score: 5, copy: 'Hard lock on distracting alerts' },
+  };
+  const projectedScore = Math.max(50, Math.min(99, Number(plan.focusScore) + intensityMap[quickSession.intensity].score));
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 18 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      className="relative overflow-hidden rounded-[2rem] border border-pulse/30 bg-[linear-gradient(135deg,rgba(255,90,31,0.18),rgba(255,207,51,0.08)),rgba(255,255,255,0.06)] p-5 shadow-hot"
+    >
+      <div className="absolute right-4 top-4 h-24 w-24 rounded-full border border-volt/30 bg-volt/10 blur-sm" />
+      <div className="relative flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-black uppercase text-volt">Flash session launcher</p>
+          <h2 className="mt-2 text-2xl font-black">Build a custom sprint</h2>
+          <p className="mt-2 text-sm leading-6 text-white/55">Pick mode, minutes, and intensity. Starting it creates a real saved session and launches the live timer.</p>
+        </div>
+        <Zap className="text-aqua" />
+      </div>
+
+      <div className="relative mt-6 grid gap-4 sm:grid-cols-3">
+        <label className="rounded-2xl border border-white/10 bg-ink/70 p-4">
+          <span className="text-xs font-black uppercase text-white/45">Mode</span>
+          <select
+            value={quickSession.mode}
+            onChange={(event) => setQuickSession((current) => ({ ...current, mode: event.target.value }))}
+            className="mt-3 w-full rounded-xl border border-white/10 bg-black px-3 py-3 font-black outline-none ring-aqua/30 focus:ring-4"
+          >
+            {['Deep Work', 'Exam Sprint', 'Lecture', 'Wind Down'].map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="rounded-2xl border border-white/10 bg-ink/70 p-4">
+          <span className="text-xs font-black uppercase text-white/45">Minutes</span>
+          <input
+            type="number"
+            min="10"
+            max="120"
+            value={quickSession.durationMinutes}
+            onChange={(event) => setQuickSession((current) => ({ ...current, durationMinutes: event.target.value }))}
+            className="mt-3 w-full rounded-xl border border-white/10 bg-black px-3 py-3 text-xl font-black outline-none ring-aqua/30 focus:ring-4"
+          />
+        </label>
+        <label className="rounded-2xl border border-white/10 bg-ink/70 p-4">
+          <span className="text-xs font-black uppercase text-white/45">Intensity</span>
+          <select
+            value={quickSession.intensity}
+            onChange={(event) => setQuickSession((current) => ({ ...current, intensity: event.target.value }))}
+            className="mt-3 w-full rounded-xl border border-white/10 bg-black px-3 py-3 font-black outline-none ring-aqua/30 focus:ring-4"
+          >
+            {Object.keys(intensityMap).map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="relative mt-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+        <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
+          <p className="text-xs font-black uppercase text-white/45">Projected focus lock</p>
+          <div className="mt-3 flex items-end gap-3">
+            <p className="text-5xl font-black text-volt">{projectedScore}%</p>
+            <p className="pb-2 text-sm font-bold text-white/55">{intensityMap[quickSession.intensity].copy}</p>
+          </div>
+          <div className="mt-4 h-2 rounded-full bg-white/10">
+            <motion.div
+              animate={{ width: `${projectedScore}%` }}
+              className="h-full rounded-full bg-gradient-to-r from-pulse via-aqua to-volt"
+            />
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() =>
+            onStart({
+              mode: quickSession.mode,
+              durationMinutes: quickSession.durationMinutes,
+              focusScore: projectedScore,
+              notes: `${quickSession.intensity} ${quickSession.mode} sprint created from Flash Session Launcher.`,
+            })
+          }
+          className="inline-flex h-full min-h-20 items-center justify-center gap-2 rounded-2xl bg-volt px-6 py-4 font-black text-ink shadow-[0_0_45px_rgba(255,138,0,0.45)] disabled:opacity-60"
+        >
+          {loading ? <Activity className="animate-spin" size={18} /> : <Rocket size={18} />}
+          Launch Sprint
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
+function EnergyCheckIn({ check, setCheck, result }) {
+  return (
+    <motion.div whileHover={{ y: -4 }} className="rounded-[2rem] border border-aqua/25 bg-white/10 p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-black uppercase text-aqua">Energy check-in</p>
+          <h3 className="mt-1 text-xl font-black">Tune the system right now</h3>
+        </div>
+        <Gauge className="text-volt" />
+      </div>
+      <div className="mt-5 grid gap-4">
+        <RangeControl label="Energy" value={check.energy} onChange={(value) => setCheck((current) => ({ ...current, energy: value }))} />
+        <RangeControl label="Stress" value={check.stress} onChange={(value) => setCheck((current) => ({ ...current, stress: value }))} />
+        <select
+          value={check.environment}
+          onChange={(event) => setCheck((current) => ({ ...current, environment: event.target.value }))}
+          className="rounded-2xl border border-white/10 bg-black px-4 py-3 font-black outline-none ring-aqua/30 focus:ring-4"
+        >
+          {['Library', 'Hostel room', 'Classroom', 'Cafe', 'Home desk'].map((place) => (
+            <option key={place} value={place}>
+              {place}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="mt-5 rounded-2xl border border-white/10 bg-ink/70 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-black uppercase text-white/45">Adaptive mode</p>
+          <span className="rounded-xl bg-aqua px-3 py-2 text-xs font-black text-ink">{result.mode}</span>
+        </div>
+        <p className="mt-3 text-lg font-black text-volt">{result.minutes} minute sprint</p>
+        <p className="mt-2 text-sm leading-6 text-white/60">{result.recommendation}</p>
+      </div>
+    </motion.div>
+  );
+}
+
+function GoalPressureLab({ lab, setLab, projection }) {
+  return (
+    <motion.div whileHover={{ y: -4 }} className="rounded-[2rem] border border-volt/25 bg-white/10 p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-black uppercase text-volt">Goal pressure lab</p>
+          <h3 className="mt-1 text-xl font-black">Preview the study load</h3>
+        </div>
+        <LineChart className="text-pulse" />
+      </div>
+      <div className="mt-5 grid gap-4">
+        <RangeControl label="Target hours" value={lab.targetHours} min={1} max={10} onChange={(value) => setLab((current) => ({ ...current, targetHours: value }))} />
+        <RangeControl label="Deadline days" value={lab.deadlineDays} min={1} max={30} onChange={(value) => setLab((current) => ({ ...current, deadlineDays: value }))} />
+        <RangeControl label="Difficulty" value={lab.difficulty} onChange={(value) => setLab((current) => ({ ...current, difficulty: value }))} />
+      </div>
+      <div className="mt-5 grid grid-cols-3 gap-3">
+        {[
+          [`${projection.score}%`, 'readiness'],
+          [projection.mode, 'mode'],
+          [projection.blocks, 'blocks'],
+        ].map(([value, label]) => (
+          <div key={label} className="rounded-2xl border border-white/10 bg-black/40 p-3">
+            <p className="text-xl font-black text-aqua">{value}</p>
+            <p className="mt-1 text-[10px] font-black uppercase text-white/40">{label}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-sm leading-6 text-white/60">{projection.copy}</p>
+    </motion.div>
+  );
+}
+
+function RangeControl({ label, value, onChange, min = 0, max = 100 }) {
+  return (
+    <label>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-black uppercase text-white/45">{label}</span>
+        <span className="rounded-lg bg-white px-2 py-1 text-xs font-black text-ink">{value}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="h-2 w-full accent-orange-400"
+      />
+    </label>
+  );
+}
+
+function buildAdaptiveCheckIn(check, plan) {
+  const energy = Number(check.energy || 0);
+  const stress = Number(check.stress || 0);
+  const noisyPlace = /hostel|cafe|home/i.test(check.environment);
+  const needsRecovery = energy < 45 || stress > 70;
+  const minutes = needsRecovery ? 25 : energy > 80 && stress < 45 ? Number(plan.blockLength || 40) + 10 : Number(plan.blockLength || 40);
+
+  return {
+    mode: needsRecovery ? 'Recovery Sprint' : noisyPlace ? 'Shielded Deep Work' : plan.mode,
+    minutes,
+    recommendation: needsRecovery
+      ? 'Use a shorter sprint, block social alerts, and take a movement reset before the next session.'
+      : noisyPlace
+        ? `Your ${check.environment} setup needs stricter batching and visible academic-only alerts.`
+        : 'Energy is strong enough for the recommended plan. Keep the timer visible and stay with one task.',
+  };
+}
+
+function buildGoalProjection(lab, user, plan) {
+  const hours = Number(lab.targetHours || 1);
+  const days = Number(lab.deadlineDays || 1);
+  const difficulty = Number(lab.difficulty || 50);
+  const pressure = Math.min(40, Math.round((difficulty / Math.max(days, 1)) * 1.8));
+  const score = Math.max(52, Math.min(99, Math.round(Number(plan.focusScore || 85) + hours * 1.6 - pressure / 2)));
+  const examMode = hours >= 6 || days <= 3 || difficulty > 82;
+  const blocks = Math.max(1, Math.ceil(hours * (examMode ? 1.1 : 0.8)));
+
+  return {
+    score,
+    mode: examMode ? 'Exam Sprint' : 'Deep Work',
+    blocks,
+    copy: `${user?.examType || 'Your track'} needs ${blocks} protected blocks. Keep ${user?.biggestDistraction || 'social apps'} delayed until breaks and allow only deadline alerts.`,
+  };
 }
 
 function PersonalFocusVisual({ user, plan }) {
@@ -1372,6 +1774,8 @@ function Coach({ token, logout }) {
 function Insights({ token, logout }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [aiAdvice, setAiAdvice] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     requestJson('/api/dashboard', { token, logout })
@@ -1387,57 +1791,143 @@ function Insights({ token, logout }) {
     completedSessions: 0,
     notificationsManaged: 0,
   };
-  const bars = insights.weeklyRhythm;
+  const plan = normalizePlan(data?.plan || buildPersonalPlan(data?.user || {}));
+  const sessions = data?.sessions || [];
+  const notificationEvents = data?.notificationEvents || [];
+  const analytics = buildRealisticAnalytics({ insights, plan, sessions, notificationEvents, user: data?.user });
+
+  async function generateLaggingPlan() {
+    setAiLoading(true);
+    setAiAdvice('');
+    try {
+      const response = await fetch(`${API_URL}/api/coach`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          message: `Analyze where I am currently lagging and give a practical improvement plan.
+Focus score: ${analytics.focusScore}%
+Consistency: ${analytics.consistency}%
+Completion rate: ${analytics.completionRate}%
+Notification pressure: ${analytics.notificationPressure}%
+Weakest area: ${analytics.weakest.label} at ${analytics.weakest.value}%
+Recent sessions: ${sessions.map((session) => `${session.mode} ${session.durationMinutes}min ${session.focusScore}%`).join('; ') || 'no saved sessions yet'}
+Recent notification decisions: ${notificationEvents.map((event) => `${event.appName}:${event.decision}`).join('; ') || 'no analyzed notifications yet'}`,
+        }),
+      });
+      const result = await response.json();
+      if (response.status === 401) {
+        logout();
+        throw new Error('Please login again to use the AI improvement coach.');
+      }
+      if (!response.ok) {
+        throw new Error(result.detail || result.error || 'AI analysis failed.');
+      }
+      setAiAdvice(result.reply || result.fallback || analytics.fallbackAdvice);
+    } catch (lagError) {
+      setAiAdvice(lagError.message || analytics.fallbackAdvice);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   return (
     <Page>
-      <ShellPage eyebrow="Live analytics" title="Insights from your saved focus activity" body="The analytics page now reads your real saved sessions and notification decisions from the backend.">
+      <ShellPage eyebrow="Live analytics" title="Insights from your saved focus activity" body="Charts now react to your sessions, notification decisions, focus score, target hours, and AI improvement feedback.">
         {error && <div className="mb-5 rounded-3xl border border-pulse/30 bg-pulse/10 p-4 text-sm font-bold">{error}</div>}
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="glass rounded-3xl p-5 lg:col-span-2">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard icon={Rocket} title="Real focus score" value={`${analytics.focusScore}%`} color="text-pulse" />
+          <MetricCard icon={AlarmClockCheck} title="Completion rate" value={`${analytics.completionRate}%`} color="text-volt" />
+          <MetricCard icon={BellRing} title="Notification pressure" value={`${analytics.notificationPressure}%`} color="text-aqua" />
+          <MetricCard icon={Command} title="Lagging area" value={analytics.weakest.label} color="text-volt" />
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
+          <div className="glass rounded-3xl p-5">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-black">Weekly focus rhythm</h2>
+              <div>
+                <h2 className="text-xl font-black">Weekly focus rhythm</h2>
+                <p className="mt-1 text-sm text-white/45">Generated from saved sessions plus your target profile.</p>
+              </div>
               <LineChart className="text-aqua" />
             </div>
-            <div className="mt-8 flex h-72 items-end gap-3">
-              {bars.map((height, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ height: 0 }}
-                  whileInView={{ height: `${height}%` }}
-                  viewport={{ once: true }}
-                  transition={{ delay: index * 0.06, duration: 0.7 }}
-                  className="min-w-0 flex-1 rounded-t-2xl bg-gradient-to-t from-pulse via-aqua to-volt"
-                />
-              ))}
-            </div>
+            <FocusBarChart bars={analytics.weeklyBars} />
           </div>
-          <div className="grid gap-4">
-            <MetricCard icon={Command} title="Best mode" value={insights.bestMode} color="text-aqua" />
-            <MetricCard icon={AlarmClockCheck} title="Recovery time" value={insights.recoveryTime} color="text-volt" />
-            <MetricCard icon={Rocket} title="Avg focus" value={`${insights.averageFocusScore}%`} color="text-pulse" />
-            <MetricCard icon={BellRing} title="Alerts analyzed" value={insights.notificationsManaged} color="text-aqua" />
+          <div className="glass rounded-3xl p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-black uppercase text-volt">Performance radar</p>
+                <h2 className="mt-1 text-xl font-black">Where you stand</h2>
+              </div>
+              <Radar className="text-pulse" />
+            </div>
+            <RadarScoreChart items={analytics.radar} />
           </div>
         </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+          <div className="glass rounded-3xl p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-black uppercase text-aqua">Notification decisions</p>
+                <h2 className="mt-1 text-xl font-black">Distraction mix</h2>
+              </div>
+              <BellRing className="text-volt" />
+            </div>
+            <DecisionDonutChart decisions={analytics.decisions} />
+          </div>
+          <div className="glass rounded-3xl p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-black uppercase text-pulse">AI improvement coach</p>
+                <h2 className="mt-1 text-2xl font-black">Find where you are lagging</h2>
+                <p className="mt-2 text-sm leading-6 text-white/55">Uses your current scores, saved sessions, and notification history to generate a specific improvement plan.</p>
+              </div>
+              <BrainCircuit className="text-aqua" />
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              {analytics.radar.slice(0, 3).map((item) => (
+                <div key={item.label} className="rounded-2xl border border-white/10 bg-black/40 p-4">
+                  <p className="text-2xl font-black text-volt">{item.value}%</p>
+                  <p className="mt-1 text-xs font-black uppercase text-white/45">{item.label}</p>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={generateLaggingPlan}
+              disabled={aiLoading}
+              className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-aqua px-5 py-4 font-black text-ink shadow-glow disabled:opacity-60 sm:w-auto"
+            >
+              {aiLoading ? <Activity className="animate-spin" size={18} /> : <WandSparkles size={18} />}
+              Generate AI Improvement Plan
+            </button>
+            <div className="mt-5 min-h-36 rounded-3xl border border-white/10 bg-ink/70 p-5">
+              <p className="text-sm font-black uppercase text-volt">Coach output</p>
+              <p className="mt-3 whitespace-pre-line leading-8 text-white/70">{aiAdvice || analytics.fallbackAdvice}</p>
+            </div>
+          </div>
+        </div>
+
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <div className="glass rounded-3xl p-5">
             <p className="text-sm font-black uppercase text-volt">Recent sessions</p>
             <div className="mt-4 grid gap-3">
-              {(data?.sessions || []).slice(0, 5).map((session) => (
+              {sessions.slice(0, 5).map((session) => (
                 <div key={session.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-ink/60 p-4">
                   <div>
                     <p className="font-black">{session.mode}</p>
-                    <p className="text-sm text-white/45">{session.durationMinutes} minutes</p>
+                    <p className="text-sm text-white/45">{session.durationMinutes} minutes · {session.endedAt ? 'completed' : 'running or saved'}</p>
                   </div>
                   <span className="rounded-xl bg-white px-3 py-2 font-black text-ink">{session.focusScore}%</span>
                 </div>
               ))}
-              {(!data?.sessions || data.sessions.length === 0) && <p className="leading-7 text-white/55">No sessions yet. Start one from the dashboard.</p>}
+              {sessions.length === 0 && <p className="leading-7 text-white/55">No sessions yet. Start one from the dashboard.</p>}
             </div>
           </div>
           <div className="glass rounded-3xl p-5">
             <p className="text-sm font-black uppercase text-pulse">Recent notification decisions</p>
             <div className="mt-4 grid gap-3">
-              {(data?.notificationEvents || []).slice(0, 5).map((event) => (
+              {notificationEvents.slice(0, 5).map((event) => (
                 <div key={event.id} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-black">{event.appName}</p>
@@ -1446,13 +1936,160 @@ function Insights({ token, logout }) {
                   <p className="mt-2 text-sm text-white/52">{event.suggestedAction}</p>
                 </div>
               ))}
-              {(!data?.notificationEvents || data.notificationEvents.length === 0) && <p className="leading-7 text-white/55">Analyze notifications from the dashboard to fill this feed.</p>}
+              {notificationEvents.length === 0 && <p className="leading-7 text-white/55">Analyze notifications from the dashboard to fill this feed.</p>}
             </div>
           </div>
         </div>
       </ShellPage>
     </Page>
   );
+}
+
+function FocusBarChart({ bars }) {
+  const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  return (
+    <div className="mt-8 flex h-72 items-end gap-3">
+      {bars.map((height, index) => (
+        <div key={labels[index]} className="flex min-w-0 flex-1 flex-col items-center gap-3">
+          <div className="flex h-60 w-full items-end rounded-2xl border border-white/10 bg-black/30 p-1">
+            <motion.div
+              initial={{ height: 0 }}
+              whileInView={{ height: `${height}%` }}
+              viewport={{ once: true }}
+              transition={{ delay: index * 0.06, duration: 0.7 }}
+              className="w-full rounded-xl bg-gradient-to-t from-pulse via-aqua to-volt shadow-[0_0_28px_rgba(249,115,22,0.35)]"
+            />
+          </div>
+          <span className="text-xs font-black text-white/45">{labels[index]}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RadarScoreChart({ items }) {
+  return (
+    <div className="mt-6 grid gap-4">
+      {items.map((item, index) => (
+        <div key={item.label}>
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-black text-white/70">{item.label}</span>
+            <span className="rounded-lg bg-white px-2 py-1 text-xs font-black text-ink">{item.value}%</span>
+          </div>
+          <div className="h-4 overflow-hidden rounded-full bg-black/50">
+            <motion.div
+              initial={{ width: 0 }}
+              whileInView={{ width: `${item.value}%` }}
+              viewport={{ once: true }}
+              transition={{ delay: index * 0.08, duration: 0.7 }}
+              className={`h-full rounded-full ${item.color}`}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DecisionDonutChart({ decisions }) {
+  const total = Math.max(1, decisions.reduce((sum, item) => sum + item.value, 0));
+  let offset = 0;
+  const gradient = decisions
+    .map((item) => {
+      const start = offset;
+      const end = offset + (item.value / total) * 100;
+      offset = end;
+      return `${item.color} ${start}% ${end}%`;
+    })
+    .join(', ');
+
+  return (
+    <div className="mt-6 grid gap-5 sm:grid-cols-[auto_1fr] sm:items-center">
+      <motion.div
+        initial={{ rotate: -90, opacity: 0 }}
+        whileInView={{ rotate: 0, opacity: 1 }}
+        viewport={{ once: true }}
+        className="relative mx-auto grid h-48 w-48 place-items-center rounded-full"
+        style={{ background: `conic-gradient(${gradient})` }}
+      >
+        <div className="grid h-28 w-28 place-items-center rounded-full bg-ink text-center shadow-[inset_0_0_35px_rgba(0,0,0,0.7)]">
+          <div>
+            <p className="text-3xl font-black text-volt">{total}</p>
+            <p className="text-xs font-black uppercase text-white/45">alerts</p>
+          </div>
+        </div>
+      </motion.div>
+      <div className="grid gap-3">
+        {decisions.map((item) => (
+          <div key={item.label} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/35 p-3">
+            <div className="flex items-center gap-3">
+              <span className="h-3 w-3 rounded-full" style={{ background: item.color }} />
+              <span className="font-black capitalize">{item.label}</span>
+            </div>
+            <span className="text-sm font-black text-white/55">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function buildRealisticAnalytics({ insights, plan, sessions, notificationEvents, user }) {
+  const targetHours = Number(user?.dailyFocusHours || plan.dailyFocusHours || 4);
+  const sessionMinutes = sessions.reduce((sum, session) => sum + Number(session.durationMinutes || 0), 0);
+  const completed = sessions.filter((session) => session.endedAt || session.ended_at).length;
+  const sessionCount = sessions.length;
+  const completionRate = sessionCount ? Math.round((completed / sessionCount) * 100) : Math.max(52, Math.min(84, targetHours * 12));
+  const focusScore = Number(insights.averageFocusScore || plan.focusScore || 88);
+  const consistency = Math.max(45, Math.min(98, Math.round((sessionMinutes / Math.max(1, targetHours * 60)) * 72 + completionRate * 0.28)));
+  const notificationPressure = Math.max(
+    18,
+    Math.min(99, Math.round((notificationEvents.length * 9 + Number(plan.blockedAlerts || 24)) / Math.max(1, targetHours / 3))),
+  );
+  const recoveryScore = Math.max(45, Math.min(98, Math.round(100 - notificationPressure * 0.35 + completed * 3)));
+  const priorityScore = Number(plan.priorityAccuracy || 94);
+  const weeklyBars = (insights.weeklyRhythm || [76, 81, 74, focusScore, 84, 88, 82]).map((value, index) => {
+    const sessionBoost = sessions[index % Math.max(1, sessions.length)]?.focusScore || 0;
+    return Math.max(35, Math.min(99, Math.round(Number(value) * 0.75 + sessionBoost * 0.25 || value)));
+  });
+  const decisions = ['allow', 'summarize', 'batch', 'mute'].map((label) => ({
+    label,
+    value: Math.max(0, notificationEvents.filter((event) => event.decision === label).length),
+    color: {
+      allow: '#ffcf33',
+      summarize: '#ff8a00',
+      batch: '#ff5a1f',
+      mute: '#c2410c',
+    }[label],
+  }));
+  if (decisions.every((item) => item.value === 0)) {
+    decisions[0].value = Math.max(3, Math.round(priorityScore / 24));
+    decisions[1].value = Math.max(4, Math.round(notificationPressure / 18));
+    decisions[2].value = Math.max(5, Math.round(Number(plan.blockedAlerts || 24) / 5));
+    decisions[3].value = Math.max(2, Math.round(notificationPressure / 28));
+  }
+  const radar = [
+    { label: 'Focus', value: focusScore, color: 'bg-gradient-to-r from-pulse to-volt' },
+    { label: 'Consistency', value: consistency, color: 'bg-gradient-to-r from-aqua to-volt' },
+    { label: 'Completion', value: completionRate, color: 'bg-gradient-to-r from-volt to-pulse' },
+    { label: 'Recovery', value: recoveryScore, color: 'bg-gradient-to-r from-royal to-aqua' },
+    { label: 'Priority filter', value: priorityScore, color: 'bg-gradient-to-r from-aqua to-pulse' },
+  ];
+  const weakest = radar.reduce((lowest, item) => (item.value < lowest.value ? item : lowest), radar[0]);
+
+  return {
+    focusScore,
+    completionRate,
+    consistency,
+    notificationPressure,
+    recoveryScore,
+    weeklyBars,
+    decisions,
+    radar,
+    weakest,
+    fallbackAdvice: `You are currently lagging most in ${weakest.label.toLowerCase()} (${weakest.value}%). Start with one ${plan.blockLength}-minute ${plan.mode} block, keep ${plan.biggestDistraction || user?.biggestDistraction || 'social apps'} batched, and complete the session so your analytics can improve from real data.`,
+  };
 }
 
 function Stories() {

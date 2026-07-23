@@ -75,3 +75,23 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+@keyframes focus-timer-blink {
+  0%,
+  100% {
+    box-shadow:
+      0 0 22px rgba(255, 138, 0, 0.38),
+      0 0 72px rgba(255, 90, 31, 0.22);
+    opacity: 1;
+  }
+  50% {
+    box-shadow:
+      0 0 46px rgba(255, 207, 51, 0.74),
+      0 0 120px rgba(249, 115, 22, 0.42);
+    opacity: 0.82;
+  }
+}
+
+.timer-blink {
+  animation: focus-timer-blink 1.1s ease-in-out infinite;
+}
