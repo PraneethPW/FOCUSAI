@@ -40,8 +40,22 @@ import {
 } from 'lucide-react';
 
 const LOCAL_API_URL = 'http://localhost:8001';
-const PRODUCTION_API_URL = 'https://focusai-production-31f2.up.railway.app';
-const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? PRODUCTION_API_URL : LOCAL_API_URL);
+const DEPLOYED_API_URL = 'https://focusai-production-31f2.up.railway.app';
+
+function resolveApiUrl() {
+  const configuredUrl = import.meta.env.VITE_API_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/$/, '');
+  }
+
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    return LOCAL_API_URL;
+  }
+
+  return DEPLOYED_API_URL;
+}
+
+const API_URL = resolveApiUrl();
 
 const navItems = [
   { label: 'Home', path: '/' },

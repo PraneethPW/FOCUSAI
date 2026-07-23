@@ -11,20 +11,32 @@ import { analyzeNotification, buildFocusPlan, buildInsights } from './planner.js
 
 const app = express();
 const port = process.env.PORT || 8001;
+const deployedFrontendUrl = 'https://focusai-nine.vercel.app';
 const allowedFrontendOrigins = [
   process.env.FRONTEND_URL,
   ...(process.env.FRONTEND_URLS || '').split(','),
-  'https://focusai-nine.vercel.app',
+  deployedFrontendUrl,
   'http://localhost:5173',
   'http://localhost:5174',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
 ]
   .map((origin) => origin?.trim())
+  .map((origin) => origin?.replace(/\/$/, ''))
   .filter(Boolean);
+
+function isAllowedOrigin(origin) {
+  if (!origin) {
+    return true;
+  }
+
+  const cleanOrigin = origin.replace(/\/$/, '');
+  return allowedFrontendOrigins.includes(cleanOrigin) || /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(cleanOrigin);
+}
+
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedFrontendOrigins.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
 
@@ -41,6 +53,15 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 80 }));
 app.use(express.json({ limit: '1mb' }));
+
+app.get('/', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'FocusAI API',
+    health: '/api/health',
+    frontend: deployedFrontendUrl,
+  });
+});
 
 const demoSessions = new Map();
 const demoNotifications = new Map();

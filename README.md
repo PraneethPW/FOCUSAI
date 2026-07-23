@@ -98,6 +98,11 @@ For Vercel production, set:
 VITE_API_URL=https://focusai-production-31f2.up.railway.app
 ```
 
+If `VITE_API_URL` is not set, the frontend automatically uses:
+
+- `http://localhost:8001` on localhost
+- `https://focusai-production-31f2.up.railway.app` when deployed
+
 Create `backend/.env`:
 
 ```env
@@ -113,6 +118,12 @@ For Railway production, set:
 
 ```env
 FRONTEND_URL=https://focusai-nine.vercel.app
+```
+
+Optional for preview deployments:
+
+```env
+FRONTEND_URLS=https://focusai-nine.vercel.app,https://your-preview.vercel.app
 ```
 
 Never commit real `.env` files. Use `.env.example` for placeholders only.
@@ -176,6 +187,7 @@ Backend on Railway:
   - `OPENROUTER_MODEL=openai/gpt-4o-mini`
   - `JWT_SECRET`
   - `FRONTEND_URL=https://focusai-nine.vercel.app`
+  - Do not manually set `PORT`; Railway provides it automatically.
 
 Frontend on Vercel:
 
