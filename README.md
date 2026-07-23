@@ -41,11 +41,10 @@ Backend:
 
 ```text
 FocusAI/
-  package.json
-  railway.json
   frontend/
     src/
     package.json
+    vercel.json
     .env.example
   backend/
     src/
@@ -55,6 +54,7 @@ FocusAI/
       planner.js
       server.js
     package.json
+    railway.json
     .env.example
   README.md
   .gitignore
@@ -152,19 +152,28 @@ Authorization: Bearer <token>
 
 ## Deployment
 
-Railway single-service deployment:
+Backend on Railway:
 
-- Root directory: repository root
-- Build command: `npm run build`
+- Root directory: `backend`
+- Build: Railway/Nixpacks auto-detects Node
 - Start command: `npm start`
-- The backend serves `frontend/dist` in production, so the React app and `/api` routes run from the same Railway domain.
 - Required environment variables:
   - `NODE_ENV=production`
   - `DATABASE_URL`
   - `OPENROUTER_API_KEY`
-  - `OPENROUTER_MODEL`
+  - `OPENROUTER_MODEL=openai/gpt-4o-mini`
   - `JWT_SECRET`
-  - `FRONTEND_URL=<your Railway public URL>` after the first deploy
+  - `FRONTEND_URL=<your Vercel frontend URL>`
+
+Frontend on Vercel:
+
+- Root directory: `frontend`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Required environment variable:
+  - `VITE_API_URL=<your Railway backend URL>`
+
+After Railway gives you the backend URL, add it as `VITE_API_URL` in Vercel. After Vercel gives you the frontend URL, add it as `FRONTEND_URL` in Railway so CORS allows the deployed frontend.
 
 Neon:
 
@@ -173,9 +182,10 @@ Neon:
 
 ## Validation
 
-Full production build:
+Frontend production build:
 
 ```bash
+cd frontend
 npm run build
 ```
 
